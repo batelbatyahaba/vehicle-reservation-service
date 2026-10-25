@@ -11,6 +11,10 @@ class ConflictError(DomainError):
     status_code = 409
 
 
+class UnprocessableError(DomainError):
+    status_code = 422
+
+
 class VehicleNotFound(NotFoundError):
     code = "vehicle_not_found"
 
@@ -35,11 +39,9 @@ class InvalidStateTransition(ConflictError):
     code = "invalid_state_transition"
 
 
-class StartDateInPast(DomainError):
-    status_code = 422
+class StartDateInPast(UnprocessableError):
     code = "start_date_in_past"
 
 
-class IdempotencyKeyReused(DomainError):
-    status_code = 422
+class IdempotencyKeyReused(UnprocessableError):
     code = "idempotency_key_reused"

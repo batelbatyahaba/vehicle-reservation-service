@@ -1,7 +1,6 @@
 from datetime import datetime
-from typing import Self
 
-from pydantic import AwareDatetime, BaseModel, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, Field, ValidationInfo, field_validator
 
 from app.models import ReservationStatus
 from app.schemas.common import InputSchema, ReadSchema
@@ -11,11 +10,15 @@ class DateRange(InputSchema):
     start_date: AwareDatetime
     end_date: AwareDatetime
 
-    @model_validator(mode="after")
-    def check_end_after_start(self) -> Self:
-        if self.end_date <= self.start_date:
-            raise ValueError("end_date must be after start_date")
-        return self
+    @field_validator("end_date")
+    @classmethod
+    def check_end_after_start(
+        cls, end_date: datetime, info: ValidationInfo
+    ) -> datetime:
+        start_date = info.data.get("start_date")
+        if start_date is not None and end_date <= start_date:
+            raise ValueError("must be after start_date")
+        return end_date
 
 
 class ReservationCreate(DateRange):
