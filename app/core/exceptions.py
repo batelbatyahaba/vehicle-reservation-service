@@ -35,6 +35,11 @@ class InvalidStateTransition(ConflictError):
     code = "invalid_state_transition"
 
 
+class StartDateInPast(DomainError):
+    status_code = 422
+    code = "start_date_in_past"
+
+
 class IdempotencyKeyReused(DomainError):
     status_code = 422
     code = "idempotency_key_reused"

@@ -71,6 +71,12 @@ An explicit `FOR SHARE` is needed: the lock that the foreign key takes on insert
 
 **Alternative considered.** Maintenance windows with a start and end, where reservations only have to avoid the window. This is more flexible, but the "no overlap" invariant would then span two tables, which an exclusion constraint cannot enforce. It would need a shared "vehicle blocks" table or explicit locking. The requirements frame maintenance as a status, so the simpler model was chosen.
 
+### Reservations in the past
+
+A new reservation must not start in the past: `start_date < now()` is rejected with `422 start_date_in_past`. A reservation starting exactly now is accepted. Clients that want an immediate rental should send a time slightly in the future to absorb network latency.
+
+The check runs in the service **after** the idempotency lookup, not in the request schema. Otherwise a legitimate retry of a reservation that started a few seconds ago would get `422` instead of the reservation that was already created. Availability queries for past ranges are allowed, since they have no side effects.
+
 ### Cancellation
 
 - `confirmed → cancelled` is the only transition.
