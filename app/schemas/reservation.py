@@ -1,14 +1,26 @@
-from datetime import datetime
+from datetime import UTC, datetime
+from typing import Annotated
 
-from pydantic import AwareDatetime, BaseModel, Field, ValidationInfo, field_validator
+from pydantic import (
+    AfterValidator,
+    AwareDatetime,
+    BaseModel,
+    Field,
+    ValidationInfo,
+    field_validator,
+)
 
 from app.models import ReservationStatus
 from app.schemas.common import InputSchema, ReadSchema
 
+UtcDatetime = Annotated[
+    AwareDatetime, AfterValidator(lambda value: value.astimezone(UTC))
+]
+
 
 class DateRange(InputSchema):
-    start_date: AwareDatetime
-    end_date: AwareDatetime
+    start_date: UtcDatetime
+    end_date: UtcDatetime
 
     @field_validator("end_date")
     @classmethod
