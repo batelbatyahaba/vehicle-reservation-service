@@ -9,6 +9,7 @@ from pydantic import (
     ValidationInfo,
     field_validator,
 )
+from pydantic_core import PydanticCustomError
 
 from app.models import ReservationStatus
 from app.schemas.common import InputSchema, ReadSchema
@@ -29,7 +30,7 @@ class DateRange(InputSchema):
     ) -> datetime:
         start_date = info.data.get("start_date")
         if start_date is not None and end_date <= start_date:
-            raise ValueError("must be after start_date")
+            raise PydanticCustomError("date_range", "must be after start_date")
         return end_date
 
 
