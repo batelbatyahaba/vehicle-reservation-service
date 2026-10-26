@@ -6,6 +6,7 @@ class Settings(BaseSettings):
 
     database_url: str
     log_level: str = "INFO"
+    db_echo: bool = False
 
 
 settings = Settings()
