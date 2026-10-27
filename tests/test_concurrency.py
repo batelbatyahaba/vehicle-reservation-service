@@ -29,13 +29,15 @@ def is_blocked(future: Future) -> bool:
     return not done
 
 
-def uncommitted_reservation(db: Session, vehicle_id: int) -> None:
+def uncommitted_reservation(
+    db: Session, vehicle_id: int, start_day: int = 1, end_day: int = 5
+) -> None:
     db.add(
         Reservation(
             vehicle_id=vehicle_id,
             customer_id="customer-1",
-            start_date=datetime(2030, 1, 1, 10, tzinfo=UTC),
-            end_date=datetime(2030, 1, 5, 10, tzinfo=UTC),
+            start_date=datetime(2030, 1, start_day, 10, tzinfo=UTC),
+            end_date=datetime(2030, 1, end_day, 10, tzinfo=UTC),
         )
     )
     db.flush()
@@ -141,7 +143,7 @@ def test_maintenance_switch_waits_for_in_flight_reservation(
     db: Session, client: TestClient, vehicle_id: int
 ) -> None:
     transaction = db.begin()
-    get_vehicle(db, vehicle_id, lock="share")
+    get_vehicle(db, vehicle_id, for_update=True)
     uncommitted_reservation(db, vehicle_id)
 
     with ThreadPoolExecutor() as executor:
@@ -161,7 +163,7 @@ def test_maintenance_switch_waits_for_in_flight_reservation(
 
 def test_reservation_waits_for_maintenance_switch(db: Session, vehicle_id: int) -> None:
     transaction = db.begin()
-    vehicle = get_vehicle(db, vehicle_id, lock="update")
+    vehicle = get_vehicle(db, vehicle_id, for_update=True)
     vehicle.status = VehicleStatus.MAINTENANCE
     db.flush()
 
@@ -174,3 +176,31 @@ def test_reservation_waits_for_maintenance_switch(db: Session, vehicle_id: int) 
     assert response.status_code == 409
     assert response.json()["code"] == "vehicle_in_maintenance"
     assert confirmed_reservations(vehicle_id) == []
+
+
+@pytest.mark.parametrize(
+    ("finish", "expected_status", "expected_count"),
+    [("commit", 409, 2), ("rollback", 201, 1)],
+)
+def test_interleaved_overlapping_inserts_do_not_deadlock(
+    db: Session,
+    vehicle_id: int,
+    finish: str,
+    expected_status: int,
+    expected_count: int,
+) -> None:
+    transaction = db.begin()
+    uncommitted_reservation(db, vehicle_id, 1, 5)
+
+    with ThreadPoolExecutor() as executor:
+        future = executor.submit(
+            post_reservation, reservation(vehicle_id, 3, 7, "customer-2")
+        )
+        assert is_blocked(future)
+        uncommitted_reservation(db, vehicle_id, 6, 8)
+        assert is_blocked(future)
+        getattr(transaction, finish)()
+        response = future.result(timeout=10)
+
+    assert response.status_code == expected_status
+    assert len(confirmed_reservations(vehicle_id)) == expected_count

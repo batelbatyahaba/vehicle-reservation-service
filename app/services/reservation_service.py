@@ -35,7 +35,7 @@ def create_reservation(
                 return _replay(existing, request_hash), False
             if data.start_date < datetime.now(UTC):
                 raise StartDateInPast("start_date must not be in the past")
-            vehicle = get_vehicle(db, data.vehicle_id, lock="share")
+            vehicle = get_vehicle(db, data.vehicle_id, for_update=True)
             if vehicle.status == VehicleStatus.MAINTENANCE:
                 raise VehicleInMaintenance(f"Vehicle {vehicle.id} is in maintenance")
             reservation = Reservation(

@@ -1,6 +1,5 @@
 import logging
 from datetime import UTC, datetime
-from typing import Literal
 
 from psycopg.errors import UniqueViolation
 from sqlalchemy import exists, select
@@ -31,14 +30,10 @@ def create_vehicle(db: Session, data: VehicleCreate) -> Vehicle:
     return vehicle
 
 
-def get_vehicle(
-    db: Session,
-    vehicle_id: int,
-    lock: Literal["share", "update"] | None = None,
-) -> Vehicle:
+def get_vehicle(db: Session, vehicle_id: int, for_update: bool = False) -> Vehicle:
     query = select(Vehicle).where(Vehicle.id == vehicle_id)
-    if lock:
-        query = query.with_for_update(read=lock == "share")
+    if for_update:
+        query = query.with_for_update()
     vehicle = db.scalar(query)
     if vehicle is None:
         raise VehicleNotFound(f"Vehicle {vehicle_id} not found")
@@ -49,7 +44,7 @@ def update_vehicle_status(
     db: Session, vehicle_id: int, status: VehicleStatus
 ) -> Vehicle:
     with db.begin():
-        vehicle = get_vehicle(db, vehicle_id, lock="update")
+        vehicle = get_vehicle(db, vehicle_id, for_update=True)
         if status == VehicleStatus.MAINTENANCE and _has_active_reservations(
             db, vehicle_id
         ):
