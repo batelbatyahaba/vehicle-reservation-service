@@ -1,7 +1,5 @@
 # Decisions
 
-> Draft. Sections marked **TBD** will be completed as the service layer is implemented.
-
 ## 1. Overlap prevention is enforced by a PostgreSQL exclusion constraint
 
 **Decision.** The invariant "a vehicle cannot have two active reservations with overlapping date ranges" is enforced by the database, not by application code:
@@ -13,7 +11,7 @@ EXCLUDE USING gist (
 ) WHERE (status = 'confirmed')
 ```
 
-Two concurrent inserts for the same slot cannot both commit: the second one blocks on the first, then fails with SQLSTATE `23P01` (`exclusion_violation`), which the service maps to `409 vehicle_unavailable`. The partial `WHERE` clause means cancelled reservations stop blocking availability as soon as the cancellation commits.
+Two concurrent inserts for the same slot cannot both commit: the second one blocks on the first, then fails with SQLSTATE `23P01` (`exclusion_violation`), which the service maps to `409 vehicle_unavailable`. The error message includes the conflicting range (never the other customer's ID), so the client can see why the request failed. The partial `WHERE` clause means cancelled reservations stop blocking availability as soon as the cancellation commits.
 
 **Alternatives considered.**
 
@@ -49,7 +47,48 @@ Because the key and the reservation are written in the same row, they commit or 
 
 **Alternatives considered.** A separate `idempotency_keys` table storing serialized responses is more general (it can cover every endpoint), but adds a second write that must share the transaction, and is more than this service needs.
 
-**Retention — assumption.** Keys live as long as the reservation row (no TTL). **TBD:** document the expected client retry window and how a TTL would be added if the table grows.
+**Retention.** Keys are stored on the reservation row and retained for as long as the reservation exists. They are not expired separately: each key adds a few bytes to a row that exists anyway, and there is no legitimate reason to reuse a key. A client can safely retry with the same key at any time; reusing a key for a different request always returns `422`. Clients should generate a new key (for example a UUID) for every new intent.
+
+Assumption: reservations are not deleted. If a data-retention policy is added later, keys are removed together with their reservations. A separate keys table (for example to cover more endpoints) would need its own expiry; the common convention there is at least 24 hours, with a periodic cleanup job.
+
+**Why the database, not a cache.** Storing keys in Redis or a similar cache would put the key and the reservation in two systems with no shared transaction. A crash between the two writes, or cache eviction, would allow a duplicate reservation on retry. Keeping both in one row makes them atomic and adds no infrastructure.
+
+## Transactions and failure handling
+
+### Concurrency model
+
+- Endpoints are synchronous (`def`). FastAPI runs them in a thread pool, so requests execute in parallel.
+- Each request gets its own SQLAlchemy `Session` from the `get_db` dependency. A session is never shared between threads, and it is closed (rolling back anything uncommitted) when the request ends.
+- Sessions take connections from SQLAlchemy's connection pool.
+- Postgres runs at its default `READ COMMITTED` isolation. Correctness does not depend on a stricter isolation level; it comes from constraints and row locks inside the database. Because of that, the guarantees hold across threads, worker processes and multiple API instances. An in-process lock would not.
+- Async SQLAlchemy was not used: the synchronous stack is simpler, and the database is the arbiter either way. Using `async def` endpoints with synchronous database calls would block the event loop, so all endpoints are plain `def`.
+
+### Transaction boundaries
+
+Every write is exactly one database transaction (`with db.begin():`). It commits only if the whole block succeeds; any exception rolls everything back. No workflow has side effects outside the database, so a failure can never leave a partially applied change.
+
+| Operation | Inside one transaction |
+|---|---|
+| Create vehicle | `INSERT` vehicle |
+| Change vehicle status | Lock vehicle (`FOR UPDATE`), check for active reservations, `UPDATE` status |
+| Create reservation | Idempotency lookup, past-date check, lock vehicle (`FOR SHARE`), maintenance check, `INSERT` reservation together with its idempotency key and request hash |
+| Cancel reservation | Lock reservation (`FOR UPDATE`), check status, `UPDATE` status |
+
+Reads (get vehicle, get reservation, availability) need no explicit transaction.
+
+### Failure behavior
+
+| Failure | What happens | Response |
+|---|---|---|
+| Business rule violated (maintenance, past date, already cancelled) | Exception inside the block; rollback, nothing written | `4xx` with the domain error code |
+| Overlap rejected by the exclusion constraint | Rollback; the conflicting range is looked up for the message | `409 vehicle_unavailable` |
+| `CHECK` constraint violated (only reachable if input validation is bypassed) | Rollback | `422 invalid_date_range` |
+| Concurrent retry with the same idempotency key | Loser's insert fails and rolls back; it reads the winner's row | `200` with the original reservation |
+| Database unreachable or connection lost mid-transaction | Postgres discards the uncommitted transaction | `503 database_unavailable` |
+| Connection pool exhausted (wait exceeds the pool timeout) | No transaction started | `503 database_unavailable` |
+| Any other unexpected error | Rollback; full traceback logged, never returned | `500 internal_error` |
+
+**Unknown commit outcome.** If the connection drops while `COMMIT` is in flight, the client receives `503`, but the reservation may in fact have been committed. This is exactly the case idempotency keys exist for: retrying with the same key returns the committed reservation instead of creating a second one or failing with `409`.
 
 ## Other business rules
 
