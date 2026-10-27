@@ -5,6 +5,7 @@ from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 from starlette.exceptions import HTTPException
 
 from app.api.v1.router import api_router
@@ -57,8 +58,9 @@ def handle_http_error(request: Request, exc: HTTPException) -> JSONResponse:
 
 
 @app.exception_handler(OperationalError)
+@app.exception_handler(PoolTimeoutError)
 def handle_database_unavailable(
-    request: Request, exc: OperationalError
+    request: Request, exc: OperationalError | PoolTimeoutError
 ) -> JSONResponse:
     logger.error("database_unavailable path=%s", request.url.path, exc_info=exc)
     return error_response(
