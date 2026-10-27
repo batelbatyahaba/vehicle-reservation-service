@@ -39,14 +39,17 @@ def handle_domain_error(request: Request, exc: DomainError) -> JSONResponse:
 def handle_validation_error(
     request: Request, exc: RequestValidationError
 ) -> JSONResponse:
-    message = "; ".join(
-        f"{'.'.join(str(part) for part in error['loc'][1:]) or error['loc'][0]}: "
-        f"{error['msg']}"
-        for error in exc.errors()
-    )
+    message = "; ".join(_describe_validation_error(error) for error in exc.errors())
     return error_response(
         status.HTTP_422_UNPROCESSABLE_CONTENT, "validation_error", message
     )
+
+
+def _describe_validation_error(error: dict) -> str:
+    source, *path = error["loc"]
+    if error["type"] == "json_invalid" or not path:
+        return f"{source}: {error['msg']}"
+    return f"{'.'.join(str(part) for part in path)}: {error['msg']}"
 
 
 @app.exception_handler(HTTPException)
