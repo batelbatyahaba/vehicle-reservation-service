@@ -2,13 +2,14 @@ import hashlib
 import logging
 from datetime import UTC, datetime
 
-from psycopg.errors import ExclusionViolation
-from sqlalchemy import exists, select
+from psycopg.errors import CheckViolation, ExclusionViolation
+from sqlalchemy import Select, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import (
     IdempotencyKeyReused,
+    InvalidDateRange,
     InvalidStateTransition,
     ReservationNotFound,
     StartDateInPast,
@@ -49,10 +50,9 @@ def create_reservation(
         ):
             return _replay(existing, request_hash), False
         if isinstance(e.orig, ExclusionViolation):
-            logger.info("reservation_conflict vehicle_id=%s", data.vehicle_id)
-            raise VehicleUnavailable(
-                f"Vehicle {data.vehicle_id} is already reserved for these dates"
-            ) from e
+            raise _unavailable(db, data) from e
+        if isinstance(e.orig, CheckViolation):
+            raise InvalidDateRange("end_date must be after start_date") from e
         raise
     logger.info(
         "reservation_created reservation_id=%s vehicle_id=%s",
@@ -89,17 +89,35 @@ def is_available(db: Session, vehicle_id: int, date_range: DateRange) -> bool:
     vehicle = get_vehicle(db, vehicle_id)
     if vehicle.status == VehicleStatus.MAINTENANCE:
         return False
-    overlapping = db.scalar(
-        select(
-            exists().where(
-                Reservation.vehicle_id == vehicle_id,
-                Reservation.status == ReservationStatus.CONFIRMED,
-                Reservation.start_date < date_range.end_date,
-                Reservation.end_date > date_range.start_date,
-            )
-        )
+    return not db.scalar(select(_overlapping(vehicle_id, date_range).exists()))
+
+
+def _overlapping(vehicle_id: int, date_range: DateRange) -> Select[tuple[Reservation]]:
+    return select(Reservation).where(
+        Reservation.vehicle_id == vehicle_id,
+        Reservation.status == ReservationStatus.CONFIRMED,
+        Reservation.start_date < date_range.end_date,
+        Reservation.end_date > date_range.start_date,
     )
-    return not overlapping
+
+
+def _unavailable(db: Session, data: ReservationCreate) -> VehicleUnavailable:
+    logger.info("reservation_conflict vehicle_id=%s", data.vehicle_id)
+    conflict = db.scalar(
+        _overlapping(data.vehicle_id, data).order_by(Reservation.start_date).limit(1)
+    )
+    if conflict is None:
+        return VehicleUnavailable(
+            f"Vehicle {data.vehicle_id} is already reserved for these dates"
+        )
+    return VehicleUnavailable(
+        f"Vehicle {data.vehicle_id} is already reserved from "
+        f"{_format_utc(conflict.start_date)} to {_format_utc(conflict.end_date)}"
+    )
+
+
+def _format_utc(value: datetime) -> str:
+    return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _find_by_idempotency_key(

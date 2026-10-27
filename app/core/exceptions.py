@@ -39,6 +39,10 @@ class InvalidStateTransition(ConflictError):
     code = "invalid_state_transition"
 
 
+class InvalidDateRange(UnprocessableError):
+    code = "invalid_date_range"
+
+
 class StartDateInPast(UnprocessableError):
     code = "start_date_in_past"
 
