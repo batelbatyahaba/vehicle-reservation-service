@@ -32,6 +32,12 @@ def error_response(status_code: int, code: str, message: str) -> JSONResponse:
 
 @app.exception_handler(DomainError)
 def handle_domain_error(request: Request, exc: DomainError) -> JSONResponse:
+    logger.info(
+        "request_rejected code=%s status=%s path=%s",
+        exc.code,
+        exc.status_code,
+        request.url.path,
+    )
     return error_response(exc.status_code, exc.code, str(exc))
 
 
@@ -39,6 +45,9 @@ def handle_domain_error(request: Request, exc: DomainError) -> JSONResponse:
 def handle_validation_error(
     request: Request, exc: RequestValidationError
 ) -> JSONResponse:
+    logger.info(
+        "request_rejected code=validation_error status=422 path=%s", request.url.path
+    )
     message = "; ".join(_describe_validation_error(error) for error in exc.errors())
     return error_response(
         status.HTTP_422_UNPROCESSABLE_CONTENT, "validation_error", message
