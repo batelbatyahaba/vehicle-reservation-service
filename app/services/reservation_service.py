@@ -102,7 +102,6 @@ def _overlapping(vehicle_id: int, date_range: DateRange) -> Select[tuple[Reserva
 
 
 def _unavailable(db: Session, data: ReservationCreate) -> VehicleUnavailable:
-    logger.info("reservation_conflict vehicle_id=%s", data.vehicle_id)
     conflict = db.scalar(
         _overlapping(data.vehicle_id, data).order_by(Reservation.start_date).limit(1)
     )
