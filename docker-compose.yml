@@ -15,5 +15,15 @@ services:
       timeout: 3s
       retries: 15
 
+  api:
+    build: .
+    environment:
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@db:5432/vehicle_reservations
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
 volumes:
   pgdata:
