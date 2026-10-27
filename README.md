@@ -52,6 +52,29 @@ The repository includes shared run configurations in `.run/`:
 
 The debug configuration deliberately runs without `--reload`: reload starts the app in a child process, which makes breakpoints less reliable.
 
+## Tests
+
+The tests run against a real PostgreSQL. The overlap guarantee is an exclusion constraint, and concurrency is enforced by row locks, so a substitute database such as SQLite would not test the real behavior.
+
+```bash
+docker compose up -d db
+.venv/Scripts/pytest
+```
+
+- Each run drops and recreates a separate database, `vehicle_reservations_test`, and applies the Alembic migrations to it. The development database is never touched.
+- Tables are truncated after every test. Transaction rollback cannot be used for isolation here, because the code under test commits and the concurrency tests use several connections at once.
+- Override the database with `TEST_DATABASE_URL`, for example in CI.
+
+| File | What it covers |
+|---|---|
+| `test_reservations.py` | Overlap cases rejected, adjacent and disjoint ranges accepted (half-open), invalid and past dates, maintenance, cancellation, availability |
+| `test_vehicles.py` | Registration, duplicates, validation, maintenance transitions |
+| `test_idempotency.py` | Replay with the same key, equivalent timestamps, different payload, per-customer scope, retry after the start time has passed |
+| `test_concurrency.py` | Parallel requests for the same slot, overlapping and adjacent bursts, parallel retries and cancellations, plus deterministic interleavings that hold a lock or an uncommitted row open and assert the competing request waits and then gets the right outcome |
+| `test_transactions.py` | A database connection killed mid-transaction (create, status change, cancel) leaves no partial state and the request can be retried; an unexpected error rolls back and leaks no details; an exhausted pool returns `503` |
+
+The deterministic concurrency tests assert that a request is still blocked after 0.5 seconds. On a very slow machine that check could in principle pass for the wrong reason (the request simply has not reached the database yet), but it cannot produce a false failure: the outcome asserted after the lock is released is the actual guarantee.
+
 ## API
 
 | Method | Path | Success | Errors |
