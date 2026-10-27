@@ -75,6 +75,37 @@ docker compose up -d db
 
 The deterministic concurrency tests assert that a request is still blocked after 0.5 seconds. On a very slow machine that check could in principle pass for the wrong reason (the request simply has not reached the database yet), but it cannot produce a false failure: the outcome asserted after the lock is released is the actual guarantee.
 
+## Operations
+
+### Logging
+
+The service logs one line per meaningful event, with IDs only. Customer IDs, request bodies and idempotency keys are never logged.
+
+| Event | Level | Fields |
+|---|---|---|
+| `vehicle_created` | INFO | `vehicle_id` |
+| `vehicle_status_changed` | INFO | `vehicle_id`, `status` |
+| `reservation_created` | INFO | `reservation_id`, `vehicle_id` |
+| `reservation_replayed` | INFO | `reservation_id` (idempotent retry) |
+| `reservation_cancelled` | INFO | `reservation_id` |
+| `request_rejected` | INFO | `code`, `status`, `path` (every 4xx: conflicts, maintenance, validation, key reuse, not found) |
+| `database_unavailable` | ERROR | `path`, with traceback |
+| `unhandled_error` | ERROR | `path`, with traceback (the client only sees `internal_error`) |
+
+### Metrics worth watching
+
+These signals would help diagnose reservation failures in production. They are not instrumented yet. Each one maps to the log events above, or to Postgres's own statistics.
+
+| Signal | Source | What it tells you |
+|---|---|---|
+| Reservation outcomes per minute, by result: created, replayed, `vehicle_unavailable`, `vehicle_in_maintenance`, `validation_error` | `reservation_created`, `reservation_replayed`, `request_rejected` | Health of the main flow. A jump in `vehicle_unavailable` is real demand or a client double-submitting; a jump in `validation_error` usually means a client release broke its payload. |
+| Replay rate (replayed ÷ created) | `reservation_replayed` | Clients timing out and retrying. A rise points at slow responses or network problems before customers complain. |
+| `idempotency_key_reused` count | `request_rejected` | Clients generating keys wrongly. It should be near zero. |
+| 5xx rate, split into `database_unavailable` and `unhandled_error` | ERROR logs | `database_unavailable` means a database outage or pool exhaustion; `unhandled_error` means a bug. |
+| p95 / p99 latency of `POST /reservations` | Access logs or middleware | Lock waits show up here first: requests for a busy vehicle queue behind each other. |
+| Connection pool: in use, waiting, timeouts | SQLAlchemy pool events | Pool exhaustion before it turns into `503`. |
+| Lock waits and deadlocks | `pg_stat_activity` (`wait_event_type = 'Lock'`), `pg_stat_database.deadlocks`, `log_lock_waits = on` | Contention on vehicle rows. Deadlocks should stay at zero (see DECISIONS.md, decision 1). |
+
 ## API
 
 | Method | Path | Success | Errors |
