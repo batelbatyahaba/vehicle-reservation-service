@@ -14,22 +14,8 @@ from tests.helpers import TEST_DATABASE_URL, VEHICLES, new_client
 
 @pytest.fixture(scope="session")
 def engine() -> Iterator[Engine]:
-    url = make_url(TEST_DATABASE_URL)
-    admin = create_engine(url.set(database="postgres"), isolation_level="AUTOCOMMIT")
-    with admin.connect() as connection:
-        connection.execute(
-            text(f'DROP DATABASE IF EXISTS "{url.database}" WITH (FORCE)')
-        )
-        connection.execute(text(f'CREATE DATABASE "{url.database}"'))
-    admin.dispose()
-
-    subprocess.run(
-        [sys.executable, "-m", "alembic", "upgrade", "head"],
-        env={**os.environ, "DATABASE_URL": TEST_DATABASE_URL},
-        check=True,
-        capture_output=True,
-    )
-
+    _recreate_database(TEST_DATABASE_URL)
+    _apply_migrations(TEST_DATABASE_URL)
     engine = create_engine(TEST_DATABASE_URL, pool_size=20, pool_pre_ping=True)
     SessionLocal.configure(bind=engine)
     yield engine
@@ -60,3 +46,22 @@ def vehicle_id(client: TestClient) -> int:
         VEHICLES, json={"plate_number": "12-345-67", "model": "Corolla"}
     )
     return response.json()["id"]
+
+
+def _recreate_database(database_url: str) -> None:
+    url = make_url(database_url)
+    name = url.database
+    admin = create_engine(url.set(database="postgres"), isolation_level="AUTOCOMMIT")
+    with admin.connect() as connection:
+        connection.execute(text(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)'))
+        connection.execute(text(f'CREATE DATABASE "{name}"'))
+    admin.dispose()
+
+
+def _apply_migrations(database_url: str) -> None:
+    subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        env={**os.environ, "DATABASE_URL": database_url},
+        check=True,
+        capture_output=True,
+    )

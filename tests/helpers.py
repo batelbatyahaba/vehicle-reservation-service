@@ -1,7 +1,9 @@
 import os
 import threading
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from typing import Any
 
 from fastapi.testclient import TestClient
@@ -41,33 +43,21 @@ def reservation(
 
 
 def confirmed_reservations(vehicle_id: int) -> list[Reservation]:
+    query = (
+        select(Reservation)
+        .filter_by(vehicle_id=vehicle_id, status=ReservationStatus.CONFIRMED)
+        .order_by(Reservation.start_date)
+    )
     with SessionLocal() as session:
-        return list(
-            session.scalars(
-                select(Reservation)
-                .where(
-                    Reservation.vehicle_id == vehicle_id,
-                    Reservation.status == ReservationStatus.CONFIRMED,
-                )
-                .order_by(Reservation.start_date)
-            )
-        )
+        return list(session.scalars(query))
 
 
 def run_concurrently(calls: list[Callable[[], Any]]) -> list[Any]:
     barrier = threading.Barrier(len(calls))
-    results: list[Any] = [None] * len(calls)
+    with ThreadPoolExecutor(max_workers=len(calls)) as executor:
+        return list(executor.map(partial(_run_after, barrier), calls))
 
-    def run(index: int, call: Callable[[], Any]) -> None:
-        barrier.wait()
-        results[index] = call()
 
-    threads = [
-        threading.Thread(target=run, args=(index, call))
-        for index, call in enumerate(calls)
-    ]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
-    return results
+def _run_after(barrier: threading.Barrier, call: Callable[[], Any]) -> Any:
+    barrier.wait()
+    return call()
