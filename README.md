@@ -1,6 +1,6 @@
 # Vehicle Reservation Service
 
-A small FastAPI + PostgreSQL service for reserving vehicles for date ranges. The interesting parts are correctness under concurrency, idempotent retries, and transaction safety. See [DECISIONS.md](DECISIONS.md).
+A small FastAPI + PostgreSQL service for reserving vehicles for date ranges. The interesting parts are correctness under concurrency, idempotent retries, and transaction safety. See [DECISIONS.md](DECISIONS.md) for the design decisions and known limitations, and [AI_USAGE.md](AI_USAGE.md) for how AI assistance was used and verified.
 
 ## Requirements
 
