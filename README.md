@@ -110,18 +110,20 @@ These signals would help diagnose reservation failures in production. They are n
 
 | Method | Path | Success | Errors |
 |---|---|---|---|
-| `POST` | `/api/v1/vehicles` | 201 | 409 `duplicate_plate_number` |
-| `GET` | `/api/v1/vehicles/{id}` | 200 | 404 |
-| `PATCH` | `/api/v1/vehicles/{id}/status` | 200 | 409 `invalid_state_transition` |
-| `GET` | `/api/v1/vehicles/{id}/availability?start_date=&end_date=` | 200 | 404, 422 |
-| `POST` | `/api/v1/reservations` (optional `Idempotency-Key` header) | 201 created, 200 replayed | 409 `vehicle_unavailable` / `vehicle_in_maintenance`, 422 |
-| `GET` | `/api/v1/reservations/{id}` | 200 | 404 |
-| `POST` | `/api/v1/reservations/{id}/cancel` | 200 | 409 `invalid_state_transition` |
+| `POST` | `/api/v1/vehicles` | 201 | 409 `duplicate_plate_number`, 422 |
+| `GET` | `/api/v1/vehicles/{id}` | 200 | 404 `vehicle_not_found` |
+| `PATCH` | `/api/v1/vehicles/{id}/status` | 200 | 404 `vehicle_not_found`, 409 `invalid_state_transition`, 422 |
+| `GET` | `/api/v1/vehicles/{id}/availability?start_date=&end_date=` | 200 | 404 `vehicle_not_found`, 422 |
+| `POST` | `/api/v1/reservations` (optional `Idempotency-Key` header) | 201 created, 200 replayed | 404 `vehicle_not_found`, 409 `vehicle_unavailable` / `vehicle_in_maintenance`, 422 `start_date_in_past` / `idempotency_key_reused` / validation |
+| `GET` | `/api/v1/reservations/{id}` | 200 | 404 `reservation_not_found` |
+| `POST` | `/api/v1/reservations/{id}/cancel` | 200 | 404 `reservation_not_found`, 409 `invalid_state_transition` |
+
+A `422` without a more specific code is `validation_error` (malformed JSON, missing or unknown fields, a timestamp without a timezone, `end_date` not after `start_date`). If the database is unreachable the API returns `503 database_unavailable`; an unexpected error returns `500 internal_error` without details.
 
 All errors share one shape:
 
 ```json
-{"code": "vehicle_unavailable", "message": "Vehicle 1 is already reserved for these dates"}
+{"code": "vehicle_unavailable", "message": "Vehicle 1 is already reserved from 2030-01-01T10:00:00Z to 2030-01-05T10:00:00Z"}
 ```
 
 Timestamps must include a timezone (ISO-8601, e.g. `2030-01-01T10:00:00Z`). Ranges are half-open: `[start_date, end_date)`.
