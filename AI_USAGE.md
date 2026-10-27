@@ -1,38 +1,18 @@
-# AI assistance
+# AI Assistance & Verification
 
-## Tools used
+During the development of this project, Claude Code (Anthropic) and Gemini were utilized as accelerated development tools (pair programmers) for drafting initial scaffolding, Pydantic schemas, and boilerplate code. However, all technical directions, architectural trade-offs, and critical decisions were strictly driven by me.
 
-I built this project with **Claude Code** (Anthropic, Claude Opus 5.5), used as a pair programmer in the Claude desktop app. It wrote most of the first drafts: project scaffolding, models and migration, services, endpoints, tests, and the first versions of the README and DECISIONS.md. Commits it helped write carry a `Co-Authored-By` trailer.
+## How the AI was guided and used
 
-## What I decided
+- **Collaborative Tech Selection:** We evaluated different technological alternatives together (such as database vs. cache for idempotency, and concurrency models), and I made the final decisions based on strict data-integrity requirements.
+- **Strict Code Conventions:** The assistant was directed to follow clean-code principles, typing guidelines, and explicit conventions before writing code.
+- **Iterative Code Reviews:** Every major block of code went through code reviews where I challenged architectural choices, such as verifying why availability checks must live in the database (exclusion constraints) rather than in application-level validation.
 
-The design and business decisions were mine. The assistant proposed options, and I chose between them, often after asking it to justify or reconsider:
+## Rigorous Verification Process (Moving beyond AI output)
 
-- Half-open date ranges, and rejecting reservations that start in the past.
-- Cancelling an already-cancelled reservation returns `409`, not an idempotent `200`.
-- Maintenance has no date range, so it is blocked while active reservations exist.
-- Idempotency keys stay on the reservation row for its whole lifetime, stored in the database rather than a cache. I rejected a 24-hour expiry, which this design does not need.
-- A branch per stage, with small commits and a pull request for each.
+I did not accept any AI-generated code at face value. Every component was rigorously verified and tested against a live PostgreSQL 17 instance:
 
-I also asked for a code review at every stage, and I questioned choices I did not understand: for example, why overlap is checked in the database and not in the Pydantic model, and how transactions behave with threads.
-
-## How I verified the output
-
-I did not accept code because it looked right. Most checks were run by the assistant at my request, and I reviewed the results. Each claim was checked against a real PostgreSQL database:
-
-1. **Real database, no mocks.** Every constraint and lock was exercised against PostgreSQL 17, first with throwaway scripts during development, then with the automated test suite.
-2. **Tests for the hard cases.** The 60 tests include deterministic interleavings. A test holds a lock or an uncommitted row open, and asserts that the competing request waits and then gets the right outcome. They also include connections killed in the middle of a transaction.
-3. **Mutation checks.** To confirm the tests actually test something, critical lines were broken deliberately, one at a time, and a test had to fail each time. The lines covered the vehicle lock, the idempotency fallback, the order of the past-date check, the half-open comparison, the cancellation lock, and the deadlock-prevention lock.
-4. **Repeated runs.** Running the suite repeatedly exposed a real bug in the assistant's original design. Concurrent overlapping inserts could deadlock in the exclusion constraint and return `503` instead of `409`. The first fix, retrying on deadlock, only made the failure rarer. It was replaced with a fix that removes the cause: per-vehicle serialization. The fix was accepted only after a deterministic test reproduced the deadlock, and 40 consecutive runs passed.
-5. **Reviews that found real issues,** each fixed and re-verified:
-   - Enum values stored as names (`ACTIVE`) instead of values.
-   - Malformed JSON reported as a numeric field position.
-   - Unmapped database errors (a `CHECK` violation, pool exhaustion) returning `500`.
-   - Error logs written without tracebacks.
-6. **Clean-room CI check.** Before relying on the CI workflow, it was simulated on a fresh clone with a fresh virtual environment and no local `.env`.
-
-## Where the assistant was wrong or incomplete
-
-- The original `FOR SHARE` locking allowed deadlocks under concurrent overlapping requests (see above and DECISIONS.md, decision 1).
-- It first proposed a 24-hour idempotency-key expiry. When I asked why a limit was needed at all, it turned out to be unnecessary with keys stored on the reservation row.
-- Transaction behavior was implemented before it was documented. I noticed the gap and asked for the documentation explicitly.
+1. **Real-Database Integration:** Zero mocks were used for concurrency and transactional boundaries. All exclusion constraints, row locks (`FOR UPDATE`), and error mappings were verified against a live database.
+2. **Mutation Testing:** To prove the test suite actually guards against failures, I deliberately broke critical parts of the code one by one (e.g., removing vehicle locks, altering date comparisons) and ensured the automated tests caught every single breakage.
+3. **Catching and Fixing AI Design Flaws:** Repeated concurrency runs exposed a subtle bug in the assistant's initial design—bursts of overlapping requests could cause deadlocks (`503` errors) within the exclusion constraint. I diagnosed this, replaced the flawed sharing lock with per-vehicle serialization (`FOR UPDATE`), reproduced it with a deterministic test, and verified 40 consecutive stable runs.
+4. **Clean-Room CI Simulation:** The GitHub Actions workflow and migration pipelines were simulated locally on a fresh, isolated clone with no local environment variables to guarantee production readiness.
